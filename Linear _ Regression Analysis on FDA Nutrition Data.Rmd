@@ -1,0 +1,465 @@
+---
+title: "Regression Analysis on FDA Nutrition Data"
+author: "Vijay Kumar"
+date: "10/19/2021"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, cache = F, fig.height = 7, fig.width = 10)
+
+```
+
+## 1. Introduction:
+
+The *United States Food and Drug Administration* is a federal agency of the department of Health and Human Services responsible for protecting the public health by ensuring the safety, efficacy, and security of human and veterinary drugs, biological products and medical devices; and by ensuring the safety of United States' food supply, cosmetics, and products that emit radiation. One of FDA's mandate is public awareness and education on food nutrition. To this end, the FDA makes available data on nutrition content of various food items to the general public. 
+
+In this assignment, we will make use of a section of the publicly available data to generate regression models that will utilize various predictor variables to determine the value of a response variable (*Calories*).
+
+We will use Lasso, Ridge and Elastic Net techniques to execute this task.
+
+## 2. Libraries:
+
+Load all the libraries required for this task.
+
+```{r Library}
+
+library(mlbench) # ML Benchmarking
+library(ggplot2) # general visualization
+library(caret) # classification and regression
+library(psych) # multivariate analysis
+library(corrplot) # correlation
+library(tidyverse) # data manipulation
+library(glue) # string literals
+library(mice) # Multivariate imputations by chained equations
+library(VIM) # Visualization and Imputation of missing values
+library(naniar) #null values visualization  
+library(PerformanceAnalytics) #correlation visualization
+
+```
+
+## 3. Load Data:
+
+Read in the data from the local directory.
+
+```{r Data}
+
+fda_data <- read.csv("FDA.csv") # Load data using the read.csv function
+
+```
+
+Objective of the regression exercise is to determine the value of calories given the other predictors. Energy_Kcal is an integer variable.
+
+## 4. Exploratory Data Analysis:
+
+### 4.1. Remove descriptive data (*character variables and NDB_No.*) which do not contribute to the predictive power of the model.
+
+```{r Eliminate Titles}
+#drop the character variables
+
+fda_data1 <- fda_data %>% select(-GmWt_Desc2, -GmWt_Desc1, -Shrt_Desc, -Long_Desc, -FdGrp_Desc, -NDB_No) #remove character variables and name variable
+
+```
+
+### 4.2. check for null values
+
+```{r Null values}
+
+#check for null values
+
+p_miss <- function(x) {sum(is.na(x))/length(x)*100} #function to calculate the null values
+
+apply(fda_data1, 2, p_miss) #apply the function on the columns
+
+```
+Choline_Tot__mg and GmWt_2 have the highest proportion of missing values with 45.69% and 45.09%  respectively.
+
+### 4.3. Visualize the missing data:
+
+```{r Visualize null values}
+
+gg_miss_var(fda_data1) #visualize missing values.
+
+```
+
+13.8% of the data is missing. This is a significant portion of the data. We will need to look for intelligent ways to handle the missing data. The variable choline_tot_mg has the most missing number of missing values with 4,016 data points missing. We will use the Predictive Mean Matching method from the MICE package to impute the missing values.
+
+### 4.4. Impute missing values
+
+We will not show the results of the imputation as this will be too verbose on the final output.
+
+```{r Impute, echo=TRUE, results='hide'}
+
+impute <- mice(fda_data1, seed=123) #impute the missing values using predictive mean matching
+
+```
+
+### 4.5. Complete data:
+
+```{r Complete the data}
+
+fda_data2 <- complete(impute,1) #save the completion in dfa_data2
+
+sum(is.null(fda_data2)) #check for any missing values
+
+```
+
+### 4.6. Visualize missing data for fda_data2:
+
+```{r Visualize null values2}
+
+gg_miss_var(fda_data2) #visualize missing values in fda_data2
+
+```
+There are no missing values in the updated dataset.
+
+### 4.7. Observe variable correlation:
+
+For this observation, we will create a function that only checks for correlation of over 0.5 in order to eliminate the variables with very low correlation. This will help make the correlation visualization more interpretable.
+
+```{r Correlation}
+
+corr_simple <- function(data=fda_data2,sig=0.5){
+  #convert data to numeric in order to run correlations
+  #convert to factor first to keep the integrity of the data - each value will become a number rather than turn into NA
+  df_cor <- data %>% mutate_if(is.character, as.factor)
+  df_cor <- df_cor %>% mutate_if(is.factor, as.numeric)
+  #run a correlation and drop the insignificant ones
+  corr <- cor(df_cor)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #drop perfect correlations
+  corr[corr == 1] <- NA 
+  #turn into a 3-column table
+  corr <- as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr <- na.omit(corr) 
+  #select significant values  
+  corr <- subset(corr, abs(Freq) > sig) 
+  #sort by highest correlation
+  corr <- corr[order(-abs(corr$Freq)),] 
+  #print table
+  print(corr)
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  
+  #plot correlations visually
+
+  corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ")
+}
+
+corr_simple()
+
+```
+We observe that the response variable (*Energy_Kcal*) is most negatively correlated with the *water_g* variable and most positively correlated with *Lipid_Tot_g*, *FA_Salt_g*,*FA_mono_g* and *FA_poly_g* variables. We will check the distribution of the variables that are most correlated to the response variable.
+
+
+
+### 4.8 Check distribution of energy:
+
+```{r Energy}
+
+ggplot(data = fda_data2) + geom_density(aes(x=Energ_Kcal, fill="Energ_KCal"))+ggtitle(label = "Distribution Density plot of Energ_Kcal")+theme_bw()
+
+```
+
+Most food items in the data have between 0-250 calories.
+
+### 4.9 Check distribution of Lipid:
+
+```{r Lipid}
+
+ggplot(data = fda_data2) + geom_density(aes(x=Lipid_Tot_g, fill="Lipid_Tot_g"))+ggtitle(label = "Distribution Density plot of Lipid_Tot_g")+theme_bw()
+
+```
+
+Distriution density of *Lipid_Tot_g* is more skewed to the left with values between 0 and 25 *Lipid_Tot_g*.
+
+### 4.10 Check distribution of FA_Sat:
+
+```{r FA_Sat}
+
+ggplot(data = fda_data2) + geom_density(aes(x=FA_Sat_g, fill="FA_Sat_g"))+ggtitle(label = "Distribution Density plot of FA_Sat_g")+theme_bw()
+
+```
+
+Distriution density of *Fat_Sat_g* is skewed to the left with values between 0 and 25 *Fat_Sat_g*.
+
+### 4.11. Check distribution of FA_Poly:
+
+```{r FA_Poly}
+
+ggplot(data = fda_data2) + geom_density(aes(x=FA_Poly_g, fill="FA_Poly_g"))+ggtitle(label = "Distribution Density plot of FA_Poly_g")+theme_bw()
+
+```
+
+Distriution density of *Fat_Poly_g* is skewed to the left with values between 0 and 15 *Fat_Poly_g*.
+
+### 4.12. Check distribution of FA_Mono:
+
+```{r FA_Mono}
+
+ggplot(data = fda_data2) + geom_density(aes(x=FA_Mono_g, fill="FA_Mono_g"))+ggtitle(label = "Distribution Density plot of FA_Mono_g")+theme_bw()
+
+```
+
+Distriution density of *Fat_Mono_g* is skewed to the left with values between 0 and 20 *Fat_Mono_g*.
+
+## 5. Lasso, Ridge and Elastic Net Regression Techniques:
+
+**Lasso regression** is a type of linear regression that uses shrinkage. Shrinkage is where data values are shrunk towards a central point, like the mean. LASSO stands for Least Absolute Shrinkage and Selection Operator. The aim of this algorithim is to minimize the sum of squares as given in the formula below:
+
+$$\sum(Y - \hat{Y})^2 + \lambda\sum|\beta| $$
+**Ridge regression** shrinks coefficients to  non-zero values to prevent overfit, but keeps all variables. The aim of the algorithm is also to reduce the sum of squares given as:
+
+$$\sum(Y - \hat{Y})^2 + \lambda\sum\beta^2 $$
+**Elastic Net Regression** is an algorithm that combines Ridge and Lasso regressions and whose cost function is the RMSE. Aim is to reduce this cost function through the alpha and lambda parameters and is given by the formula below:
+
+$$\sum(Y - \hat{Y})^2 + \lambda\left[(1-\alpha)\sum\beta^2+\alpha\sum|\beta|\right] $$
+### 5.1. Data partitioning
+
+Apply a 70 - 30 partition on the data.
+
+```{r Data partitioning}
+
+set.seed(123)
+#Split the training data using simple random sampling
+train_index<-sample(1:nrow(fda_data2),0.70*nrow(fda_data2))
+#train data
+fda_train<-fda_data2[train_index,]
+#validation data
+fda_test<-fda_data2[-train_index,]
+#dimension of train and validation data
+train_dim <- dim(fda_train)
+
+test_dim <- dim(fda_test)
+
+glue('Model train dataset has {train_dim[1]} observations and {train_dim[2]} variables. \n Model test dataset has {test_dim[1]} observations and {test_dim[2]} variables.')
+
+```
+### 5.2. Custom control parameters:
+
+Set control parameters
+
+```{r Control parameters}
+
+custom <- trainControl(method = "repeatedcv", #control with repeated cross validation
+                       number = 10, # 10 
+                       repeats = 5) #repeat 5 times
+
+```
+
+### 5.3. Linear Model:
+
+```{r Linear Model}
+
+lm <- train(Energ_Kcal ~., fda_train, method = 'lm', trControl = custom) #fit linear model
+
+summary(lm) #model summary
+
+```
+The linear model is statistically significant given the low p-value of 2.2e-16
+
+#### 5.3.1 Plot Linear Model:
+
+```{r Plot Linear Model}
+
+plot(lm$finalModel) #plot the model
+
+```
+### 5.4. Ridge Regression:
+
+```{r Ridge Model}
+
+set.seed(1234)
+
+ridge <- train(Energ_Kcal ~., fda_train, method = 'glmnet', 
+               tuneGrid = expand.grid(alpha=0, lambda=seq(0.0001, 1, length=5)),
+               trControl = custom) #alpha value for ridge regression is 0
+ridge
+
+
+```
+
+#### 5.4.1. Plot Ridge:
+
+```{r Plot Ridge Model}
+
+plot(ridge) #plot ridge
+
+```
+Root mean square error is consistent through all iteration of the regularization parameter at 19.4.
+
+#### 5.4.2. Plot Ridge _ Final Model_Lambda:
+
+```{r Plot Final Model_lambda}
+
+plot(ridge$finalModel, xvar = "lambda", label=T) #plot lambda
+
+```
+
+Coefficients value colapse as log labda increases and become zero at lambda = 12.
+
+#### 5.4.3.  Plot Ridge _ Final Model_Deviance:
+
+```{r Plot Final Model_dev}
+
+plot(ridge$finalModel, xvar = "dev", label=T) #plot deviance
+
+```
+
+Majority of the deviance is explained as coefficients continue to expand from zero.
+
+#### 5.4.4. Plot Ridge _ Check variable importance:
+
+```{r ridge vairable importance}
+
+plot(varImp(ridge, scale=F)) #plot variable importance
+
+```
+
+Most important variable for ridge regression is Vit_B6_mg and Thiamin_mg.
+
+### 5.5. Lasso Regression:
+
+```{r Lasso Model}
+
+set.seed(1234)
+
+lasso <- train(Energ_Kcal ~., fda_train, method = 'glmnet', 
+               tuneGrid = expand.grid(alpha=1, lambda=seq(0.0001, 1, length=5)),
+               trControl = custom) #alpha =1 for lasso regression
+lasso
+
+```
+
+#### 5.5.1 Plot Lasso Regression:
+
+```{r Plot Lasso Model}
+
+plot(lasso) #plot lasso
+
+```
+
+Best model performance is at lambda = 0.250075. RMSE starts increasing after this value of lambda.
+
+#### 5.5.2 Plot Lasso Regression_lambda:
+
+```{r Plot Lasso Model_lambda}
+
+plot(lasso$finalModel, xvar='lambda', label=T) #plot lasso lambda
+
+```
+
+Coefficients continue to collapse as log lambda increases.
+
+#### 5.5.3 Plot Lasso Regression_Deviation:
+
+```{r Plot Lasso Model_dev}
+
+plot(lasso$finalModel, xvar = 'dev', label=T) #plot lasso deviance
+
+```
+
+#### 5.5.4 Plot Lasso Regression_Variable Importance:
+
+```{r Plot Lasso Model_Var_Imp}
+
+plot(varImp(lasso, scale=F)) #plot variable importance for lasso.
+
+```
+
+As fraction deviance increases the coefficients continue to expand.
+
+### 5.6. Elastic Net Regression Regression:
+
+```{r EN Model}
+
+set.seed(1234)
+
+en <- train(Energ_Kcal ~., fda_train, method = 'glmnet', 
+               tuneGrid = expand.grid(alpha=seq(0,1,length=10), lambda=seq(0.0001, 0.25, length=5)),
+               trControl = custom) #combination of ridge and lasso regression
+en
+
+```
+
+### 5.6.1 Plot Elastic Net Regression:
+
+```{r Plot EN Model}
+
+plot(en) #plot elastic net model
+
+```
+
+RMSE continues to decrease as mixing percentage increases and levels out at 0.15.
+### 5.6.2. Plot EN Regression_lambda:
+
+```{r Plot EN Model_lambda}
+
+plot(en$finalModel, xvar='lambda', label=T) #plot lambda
+
+```
+
+Model coefficients collapse as the log lambda continues to increase. All coefficients collapse to zero at log lambda = 5 
+
+### 5.6.3. Plot EN Regression_Deviance:
+
+```{r Plot EN Model_dev}
+
+plot(en$finalModel, xvar='dev', label=T) #plot deviance
+
+```
+
+Coefficient values expand as the fraction deviance explained increases.
+
+## 6 Compare Models:
+
+```{r Compare_models}
+
+model_list <- list(LinearModel = lm, Ridge = ridge, Lasso = lasso, ElasticNet = en) #place model in list
+res <- resamples(model_list) #resampling
+summary(res) #summary
+
+```
+The elastic net model is the best model of the four models. It has an Rsquared value of 0.9942524 similar to lasso model. The RMSE is also lowest in lasso and elastic net models at 12.60438. The Elastic Net model however has the least Mean Absolute Error at 6.353916. The Elastic Net model is thus the best model of the four models.
+
+### 6.1. Plot Model Comparison:
+
+```{r Plot model comparison}
+
+bwplot(res) #plot model comparison
+
+```
+
+## 7. Save Model and Use for Prediction:
+
+### 7.1. Save model & read into R
+
+```{r save_model}
+
+saveRDS(en, "final_model.rds") #save model in local directory for later use.
+fm <- readRDS("final_model.rds") #read the model
+
+```
+
+### 7.1. Save model & read into R
+
+```{r RMSE _ train}
+
+p1 <- predict(fm, fda_train) #make predictions on the train data
+sqrt(mean(fda_train$Energ_Kcal-p1)^2) #root mean square error
+
+```
+The low RMSE of 5.430973e-13 indicates a very good fit of the model on the triain data.
+
+```{r RMSE_test}
+
+p2 <- predict(fm, fda_test) #make predictions on the test data
+sqrt(mean(fda_test$Energ_Kcal-p2)^2) #root mean square error
+
+```
+The RMSE of the model on the test data is expectedly higher than on the train data. It is still very low at 0.05209611 indicating that the model accurately predicts the response variable.
