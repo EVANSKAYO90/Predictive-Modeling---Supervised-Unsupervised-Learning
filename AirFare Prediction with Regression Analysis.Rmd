@@ -1,0 +1,655 @@
+---
+title: "Predicting Airfare on New Routes"
+author: "Vijay Kumar"
+date: "6/2/2021"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+# Introduction
+
+
+The airline industry is a high growth-rate and highly competitive environment. Numerous stakeholders determine the direction which the industry takes and small changes in critical parameters often lead to much larger effects in the industry. Applying data mining techniques is to analyze these potential changes aids in making informed decisions that will be beneficial for industry in the long term.In this assignment, we will utilize data from the late 1990s to conduct price predictions on airfare to new airports in order to evaluate whether flying to the new destinations will be beneficial for the respective airlines.
+
+# Loading Libraries
+
+
+```{r Libraries, echo=TRUE}
+
+library(knitr)
+library(ggplot2)
+library(caret)
+library(corrr)
+library(corrplot)
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(plotly)
+library(tidyr)
+library(broom)
+library(PerformanceAnalytics)
+library(forecast)
+library(gains)
+library(boot)
+library(RColorBrewer)
+library(dplyr)
+library(pivottabler)
+library(dummies)
+library(multcomp)
+library(lift)
+library(leaps)
+
+```
+
+
+# 1 Numerical Predictor Exploration
+
+
+Explore the numerical predictors and response (FARE) by creating a correlation table and examining some scatterplots between FARE and those predictors.
+
+
+## 1.1 Loading dataset 
+
+
+
+```{r Loading Dataset, echo=TRUE}
+
+df <- read.csv("C:/Airfares.csv")
+
+head(df)
+
+```
+
+check the structure of the dataset to check the datatypes available in the dataset.
+
+
+```{r Structure, echo=TRUE}
+
+str(df)
+
+```
+
+Checking the dimension of the dataset we realize that its made of 638 observations across 18 variables.
+
+
+```{r Dimension, echo=TRUE}
+
+dim(df)
+
+```
+
+Clean dataset to remove symbols and unwanted characters.
+
+
+```{r Data Cleaning, echo=TRUE}
+
+df$FARE <- as.numeric(substring(as.character(df$FARE),2)) 
+
+removechars <- c("$",",")
+
+for(c in removechars)
+{
+  df$S_INCOME <- sub(x = as.character(df$S_INCOME), 
+                           pattern = c,replacement = "",fixed = TRUE)
+  df$E_INCOME <-  sub(x = as.character(df$E_INCOME), 
+                            pattern = c,replacement = "",fixed = TRUE)
+}
+df$S_INCOME <- as.numeric(df$S_INCOME)
+df$E_INCOME <- as.numeric(df$E_INCOME)
+df$S_POP <- as.numeric(df$S_POP)
+df$E_POP <- as.numeric(df$E_POP)
+df$NEW <- as.numeric(df$NEW)
+df$DISTANCE <- as.numeric(df$DISTANCE)
+df$PAX <- as.numeric(df$PAX)
+
+str(df)
+
+```
+
+
+## 1.2 Creating correlation table and Scatterplots:
+
+
+###  1.2.1 Correlation table of all variables
+
+
+
+```{r Correlation Table and Scatterplots, echo=TRUE}
+
+num_cols =df[,c(5,6,9:13,16:18)] #separates out numerical columns for correlation
+
+par(mfrow=c(1,2))
+
+cor_mar=cor(num_cols,use = "complete.obs")
+
+corrplot(cor_mar,method="circle", type="lower",main="Correlation Matrix",mar=c(1,0,1,0),tl.cex=0.5,tl.col="blue", tl.srt=45,
+         col=brewer.pal(n=6, name="PuOr"))
+
+```
+
+
+## 1.2.2 Scatterplot of Fare against Coupon
+
+
+
+```{r Fare/Coupon, include=TRUE}
+
+plot(num_cols$FARE,num_cols$COUPON,xlab="Coupon",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.3 Scatterplot of Fare against New
+
+```{r Fare/New, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$NEW,xlab="New",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.4 Scatterplot of Fare against HI
+
+
+```{r Fare/Hi, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$HI,xlab="HI",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.5 Scatterplot of Fare against S-Income
+
+
+```{r Fare/S-income, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$S_INCOME,xlab="SIncome",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+
+## 1.2.6 Scatterplot of Fare against E-Income
+
+
+
+```{r Fare/E-Income, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$E_INCOME,xlab="EIncome",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+
+## 1.2.8 Scatterplot of Fare against E-Pop
+
+
+```{r Coupon by Fare/E-POP, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$E_POP,xlab="EPop",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.9 Scatterplot of Fare against Distance
+
+
+```{r Coupon by Fare/Distance, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$DISTANCE,xlab="Distance",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.10 Scatterplot of Fare against PAX
+
+
+```{r Coupon by Fare/PAX, echo=TRUE}
+
+plot(num_cols$FARE,num_cols$PAX,xlab="Pax",ylab="Fare",pch=20,col="dark red")
+
+```
+
+
+## 1.2.11 Round off numerical values 
+
+Round off numerical values in the correlation matrix to two decimal places.    
+
+
+```{r Round_off values, echo=TRUE}
+
+round(cor_mar,2)
+
+```
+
+There is a relatively high linear correlation between Fare and Distance and also between Dare and Coupon. Highest positive correlation among the variables is between distance and coupon. Distance has the strongest positive correlation with fare and hence is the best single predictor of fare.
+
+
+# 2. Categorical Predictor Exploration
+
+
+Explore the categorical predictors (excluding the first four) by computing the percentage of flights in each category. Create a pivot table with the average fare in each category. Which categorical predictor seems best for predicting FARE?
+
+
+## 2.1 Vacation
+
+
+
+```{r Vacation, echo=TRUE}
+
+cat=df[,c(7,8,14,15,18)] 
+
+vac <- count(cat,'VACATION')
+
+vac=mutate(vac, pct = n / sum(n))
+
+vac
+
+```
+
+```{r VacationAggr, echo=TRUE}
+
+v2 = aggregate(cat$FARE, list(cat$VACATION), mean)
+
+v2
+
+```
+
+
+## 2.2 SW
+
+
+
+```{r SW, echo=TRUE}
+
+sw<-count(cat,'SW')
+
+sw=mutate(sw,
+          pct = n / sum(n))
+sw
+
+```
+
+
+```{r SWAggr, echo=TRUE}
+
+sw2=aggregate(cat$FARE, list(cat$SW),mean)
+
+sw2
+
+```
+
+
+## 2.3 SLOT
+
+
+```{r SLOT, echo=TRUE}
+
+S <-count(cat,'SLOT')
+
+S =mutate(S,
+          pct = n / sum(n))
+S
+
+```
+
+
+```{r SLOTAggr, echo=TRUE}
+
+
+sAggr=aggregate(cat$FARE, list(cat$SLOT),mean)
+
+sAggr
+
+```
+
+## 2.4 Gate
+
+```{r Gate, echo=TRUE}
+
+gate<-count(cat,'GATE')
+
+gate=mutate(gate,
+         
+          pct = n / sum(n))
+
+gate
+
+```
+
+```{r GateAggr, echo=TRUE}
+
+Gateaggr=aggregate(cat$FARE, list(cat$GATE),mean)
+
+Gateaggr
+
+```
+
+Based on the average FARE as calculated by categorical variables is the highest for Controlled SLOT and the lowest for SW yes. From this we can guess that SouthWest serviced flights will be the cheapest and airports that are known for controlling their landing slot congestion will be the most expensive.
+
+
+# 2. Model Building & Variable Reduction
+
+
+Convert categorical variables (e.g, SW) into dummy variables. Then, partition the data into training and validation sets. The model will be fit to the training data and evaluated on the validation set.
+
+## 2.1. Dummy variables, Partitioning & Model Fit
+
+
+
+### 2.1.1 Dummy Varibales
+
+
+
+```{r Dummy Variables, echo=TRUE}
+
+dum <- df[c(5:18)]
+
+dum <- dummy.data.frame(dum,names = c("VACATION","SW","SLOT","GATE"),sep=".")
+
+names(dum)
+
+```
+
+
+### 2.1.2 Split
+
+
+
+```{r Split, echo=TRUE}
+
+smp_size <- floor(0.75 * nrow(dum))
+
+set.seed(123)
+
+train_ind <- sample(seq_len(nrow(dum)), size = smp_size)
+
+train <- dum[train_ind, ]
+
+test <- dum[-train_ind, ]
+
+```
+
+
+### 2.1.3 Model Building
+
+Create a model for the entire training set:
+
+
+```{r Model Building, echo=TRUE}
+
+fare.lm <- lm(FARE~.,data = train)
+
+summary(fare.lm)
+
+```
+
+## 2.2 Stepwise Regression
+
+Use stepwise regression to reduce the number of predictors. You can ignore the first four predictors.
+
+
+```{r Stepwise Regression, echo=TRUE}
+
+fare.lm.step <- lm(FARE~.,data=train)
+
+step(fare.lm.step, direction = "both")
+
+```
+
+
+```{r Stepwise Regression Model, echo=TRUE}
+
+step_model <- lm(formula = FARE ~ VACATION.No + SW.No + S_INCOME + S_POP + 
+    E_POP + GATE.Constrained + DISTANCE + PAX, data = train)
+
+s1 <- summary(step_model)
+
+paste(paste("Multiple R-squared: ",round(s1$r.squared,digits=6)), 
+      paste("Adjusted R-squared: ",round(s1$adj.r.squared,digits=6)))
+
+```
+
+Stepwise regression pushes for model building based on VACATION, SW, S_INCOME, S_POP, E-POP, GATE.Constrained, DISTANCE, PAX.
+
+
+## 2.3 Stepwise Regression
+
+
+Repeat 2.2. using exhaustive search instead of stepwise regression:
+
+
+
+```{r Exhaustive Search, echo=TRUE}
+
+trainsearch <- regsubsets(FARE~.,data = train, nbest=1,nvmax=dim(train)[2],
+                          method = "exhaustive")
+
+```
+
+
+```{r Summary, echo=TRUE}
+
+sum<-summary(trainsearch)
+
+sum$which
+
+```
+
+
+```{r Metrics, echo=TRUE}
+
+sum$rsq
+
+```
+
+
+```{r Adjusted R2, echo=TRUE}
+
+sum$adjr2
+
+```
+
+
+```{r cp, echo=TRUE}
+
+sum$cp
+
+```
+
+
+```{r Model_Metrics, echo=TRUE}
+
+model_exhaust <- lm(formula=FARE ~ VACATION.Yes + SW.No + S_INCOME + S_POP + E_POP + SLOT.Free + GATE.Constrained + DISTANCE + PAX, data = train)
+
+s2 <- summary(model_exhaust)
+
+paste(paste("Multiple R-squared: ",round(s2$r.squared,digits=6)), 
+      
+      paste("Adjusted R-squared: ",round(s2$adj.r.squared,digits=6)))
+
+```
+
+The exhaustive search function yields a slightly better performing formula that includes VACATION.Yes, SW.No, S_INCOME, S_POP, E_POP, SLOT.Free, GATE.Constrained, DISTANCE, and PAX. 9 variables as opposed to 8 variables following the stepwise regression.
+
+## 2.4 Model Comparison
+
+
+Compare the predictive accuracy of both models i and ii:
+
+
+```{r Model Comparison, echo=TRUE}
+
+comp_step <- predict(step_model,test)
+
+accuracy(comp_step,test$FARE)
+
+```
+
+
+```{r Model Comparison2, echo=TRUE}
+
+comp_exhaust <- predict(model_exhaust,test)
+
+accuracy(comp_exhaust,test$FARE)
+
+```
+
+```{r ANOVA Table, echo=TRUE}
+
+anova(step_model,model_exhaust)
+
+```
+
+```{r Lift Charts, echo=TRUE}
+
+par(mfrow=c(1,2))
+
+plotLift(comp_step,labels = comp_step,n.buckets=5,main="Stepwise Regression MOdel")
+
+plotLift(comp_exhaust,labels = comp_exhaust,n.buckets=5,main="Exhaustive Search Model")
+
+```
+
+
+## 2.5 Predict Fares
+
+
+Using model (iii), predict the average fare on a route with the following characteristics: COUPON = 1.202, NEW = 3, VACATION = No, SW = No, HI = 4442.141, S_INCOME = $28,760, E_INCOME = $27,664, S_POP = 4,557,004, E_POP = 3,195,503, SLOT = Free, GATE = Free, PAX = 12,782, DISTANCE = 1976 miles.
+
+
+```{r Predict Fares, echo=TRUE}
+
+nd <- data.frame(COUPON = 1.202, NEW = 3, VACATION.Yes = 0, SW.No = 1, HI = 4442.141, S_INCOME = 28760, E_INCOME = 27664, S_POP = 4557004, E_POP = 3195503, SLOT.Free = 1, GATE.Constrained = 0, PAX = 12782, DISTANCE = 1976)
+
+predict(model_exhaust,newdata = nd)
+
+```
+
+The average fare will be $52.91
+
+
+## 2.6 Predict Reduction in Fares
+
+Predict the reduction in average fare on the route in (v) if Southwest decides to cover this route [using model (iii)].
+
+
+```{r Predict_Reduction, echo=TRUE}
+
+nd2 <- data.frame(COUPON = 1.202, NEW = 3, VACATION.Yes = 0, SW.No = 0, HI = 4442.141, S_INCOME = 28760, E_INCOME = 27664, S_POP = 4557004, E_POP = 3195503, SLOT.Free = 1, GATE.Constrained = 0, PAX = 12782, DISTANCE = 1976)
+
+predict(model_exhaust,newdata = nd2)
+
+```
+
+Average fares will drop to $39.78 if Southwest joins this route.
+
+## 2.7 Predict Reduction in Fares
+
+
+### In reality, which of the factors will not be available for predicting the average fare from a new airport (i.e., before flights start operating on those routes)? Which ones can be estimated? How?
+
+
+HI, PAX and NEW would not be available before embarking on the new route. COUPON, SW, Incomes, and Populations remain consistent and hence can be predict. VACATION, SLOT, and GATE can be predicted based on new route and rules governing the airports.
+
+
+
+## 2.8 Model with Factors Available before Flights Begin
+
+Select a model that includes only factors that are available before flights begin to operate on the new route. Use an exhaustive search to find such a model.
+
+```{r Available_Before_Flights, echo=TRUE}
+
+t_search <- regsubsets(FARE~ COUPON + VACATION.Yes + VACATION.No + SW.Yes + SW.No + S_INCOME + E_INCOME + S_POP + E_POP + SLOT.Free + SLOT.Controlled + GATE.Free + GATE.Constrained + DISTANCE, data = train, nbest=1,nvmax=dim(train)[2], method = "exhaustive")
+
+```
+
+```{r Show_models, echo=TRUE}
+
+sum_t<-summary(t_search)
+
+sum_t$which
+
+```
+
+
+```{r Show_Metrics, echo=TRUE}
+
+sum_t$rsq
+
+```
+
+
+```{r Adjusted-R2, echo=TRUE}
+
+sum_t$adjr2
+
+```
+
+
+```{r Cp3, echo=TRUE}
+
+sum_t$cp
+
+```
+
+```{r Model Selection Exhaust, echo=TRUE}
+
+model_exhaust2 <- lm(formula=FARE ~ VACATION.Yes + SW.Yes + S_INCOME + E_POP + SLOT.Controlled + GATE.Constrained + DISTANCE, data = train)
+
+s4 <- summary(model_exhaust2)
+
+paste(paste("Multiple R-squared: ",round(s4$r.squared,digits=6)), 
+      paste("Adjusted R-squared: ",round(s4$adj.r.squared,digits=6)))
+
+```
+
+## 2.9 Use model in 2.8 above to predict fare with variables below:
+
+Use the model in (viii) to predict the average fare on a route with characteristics COUPON = 1.202, NEW = 3, VACATION = No, SW = No, HI = 4442.141, S_INCOME = $28,760, E_INCOME = $27,664, S_ POP = 4,557,004, E_POP = 3,195,503, SLOT = Free, GATE = Free, PAX = 12782, DISTANCE = 1976 miles.
+
+```{r Available_Before_Flights2, echo=TRUE}
+
+nd3 <- data.frame(COUPON = 1.202, NEW = 3, VACATION.Yes = 0, SW.Yes = 0, HI = 4442.141, S_INCOME = 28760, E_INCOME = 27664, S_POP = 4557004, E_POP = 3195503, SLOT.Controlled = 0, GATE.Constrained = 0, PAX = 12782, DISTANCE = 1976)
+
+predict(model_exhaust2,newdata = nd3)
+
+```
+Fare predicted to be $54.33
+
+## 2.10 Use model in 2.8 above to predict fare with variables below:
+
+
+Compare the predictive accuracy of this model with model (iii). Is this model good enough, or is it worthwhile reevaluating the model once flights begin on the new route?
+
+
+```{r Model Comparison 1, echo=TRUE}
+
+comp_exhaust2 <- predict(model_exhaust2,test)
+
+accuracy(comp_exhaust2,test$FARE)
+
+```
+
+
+```{r Model Comparison 2 & 3, echo=TRUE}
+
+comp_exhaust <- predict(model_exhaust,test)
+
+accuracy(comp_exhaust,test$FARE)
+
+```
+
+
+```{r Anova2, echo=TRUE}
+
+anova(model_exhaust,model_exhaust2)
+
+```
+
+This model seems to be marginally more accurate than the al inclusive model.
+
+
+
