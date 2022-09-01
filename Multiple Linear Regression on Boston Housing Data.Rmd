@@ -1,0 +1,348 @@
+---
+title: "Predicting Boston Housing Prices"
+author: "Vijay Kumar"
+date: "6/1/2021"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+# Introduction
+
+In this R Markdown document, we will employ multiple linear regression for the purpose of prediction. We will generate models and evaluate the model performances on the Boston Housing dataset using several predictive techniques. The file BostonHousing.csv contains information concerning housing in the area of Boston. The dataset includes information on 506 census housing tracts in the Boston area. The goal is to predict the median house price in new tracts based on information such as crime rate, pollution, and number of rooms. The dataset contains 13 predictors, and the response is the median house price (MEDV). 
+
+
+# 1. Fitting a Multiple Linear Regression
+
+
+## 1.1 Loading Libraries
+
+
+```{r Libraries, echo=TRUE}
+
+library(caret)
+library(glmnet)
+library(mlbench)
+library(psych)
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(leaps)
+library(MASS)
+library(corrplot)
+library(corrr)
+library(gridExtra)
+library(dplyr)
+library(DT)
+library(PerformanceAnalytics)
+library(rpart)
+library(mgcv)
+library(boot)
+library(rpart.plot)
+library(forecast)
+library(knitr)
+library(gains)
+
+```
+
+
+## 1.2 Loading Dataset
+
+
+```{r Dataset, echo=TRUE}
+
+df <- read.csv("C:/BostonHousing.csv")
+
+head(df)
+
+```
+
+
+## 1.3 Custom Control Parameters
+
+
+```{r Custom Control, echo=TRUE}
+
+control <- trainControl(method = "repeatedcv", #Use Repeated cross-validation 
+                       number = 10,
+                       repeats = 5,
+                       verboseIter = T)
+
+```
+
+
+## 1.4 Fitting the Multiple Linear Regression Model
+
+
+```{r Linear Model, echo=TRUE}
+
+set.seed(1)
+
+boston.lm <- lm(MEDV ~ CRIM+CHAS+RM,
+                data = df,
+                trControl = control)
+
+summary(boston.lm)
+
+```
+
+### 1.1.6 Writing the equation for predicting the median house price from the predictors in the model.
+
+       medv =  3.76304*chas -0.26072*crim + 8.27818*rm -28.81068
+       
+       
+# 2. Case Application for model
+
+
+Median house price for tract in Boston area that does not bound with Charles river, has a crime rate of 0.1 and average room per house of 6:
+
+
+```{r Prediction_Linear_Model, echo=TRUE}
+
+boston.lm.pred <- predict(boston.lm,data.frame("CRIM" = 0.1,
+                                               "RM" = 6, "CHAS" = 0))
+
+boston.lm.pred
+
+```
+           
+
+## 2.1 What is the Prediction Error
+
+
+Thus the predicted MEDV is 20.83232 for this house. Since there is no data that is exactly the same as the example given above we are not able to calculate the prediction error.
+
+
+# 3. Reducing the Number of Predictors
+
+
+## 3.1 Varibale Analysis 
+
+Which predictors are likely to be measuring the same thing among the 13 predictors
+
+```{r Matrix, echo=TRUE}
+
+plot(df) # Matrix shows relationship of variables to each other.
+
+```
+
+This matrix gives clues to which predictors are loosely related and which ones are not. From the matrix we can see that INDUS, NOX, and TAX seem to be positively correlated. This would indicate that INDUS, NOX and TAX predict the same thing.
+
+
+## 3.2 Correlation among predictor variables.
+
+
+Compute the correlation table of the 12 numerical predictors and search for highly correlated pairs.
+
+
+```{r Correlation Plot, echo=TRUE}
+
+#finding correlation for all numerical values 
+
+df2 = subset(df, select = -c(MEDV,CAT..MEDV) )
+
+#Drop the target variable and chas non-numeric
+
+chart.Correlation(df2, histogram=FALSE, pch=19)
+
+```
+
+In this correlation table we observe that:
+
+The highest positive correlations are between rad and tax & between INDUS and NOX. The highest negative correlation is between DIS and AGE and DIS and NOX.Note-worthy variables to look out for would be ZN to DIS, RAD to TAX. That is, we would want to remove INDUS and RAD because, sensibly speaking, high proportion of nitrous oxide implies the existence of industries and more road access implies high tax payments. More road networks also, intrinsicly implies more industrial development.
+
+
+## 3.3 Reduce remaining predictors using stepwise regression:
+
+
+### 3.3.1 Data Partitioning
+
+Employ a 70 - 30 split. First, drop INDUS, RAD and CAT..MEDV as observed in 3.2 above. There is a high correlation between RAD and TAX and between INDUS and NOX. It will make sense to drop one for the other in order to avoid over-fitting.
+
+
+```{r Split, echo=TRUE}   
+
+df3 = subset(df, select = -c(CAT..MEDV, RAD, INDUS) )
+
+set.seed(1)
+
+index <- sample(nrow(df3),nrow(df3)*0.80)
+
+train <- df3[index,]
+
+test <- df3[-index,]
+
+```
+
+
+### 3.3.2 Model 1 Building
+
+Build a model based on all the predictors then build subsequent models through selected predictor reduction algorithms. This will be after dropping RAD and INDUS.
+
+
+```{r Model1, echo=TRUE}  
+
+#All predictors present except, RAD, INDUS and CAT..MEV
+
+model1 <- lm(MEDV~ .,
+             data = train)
+
+summary(model1)
+
+model1.pred <- predict(model1,test)
+
+accuracy(model1.pred,test$MEDV)
+
+```
+
+
+Use step() to run stepwise regression on model2. Set direction to either "Backward", "forward" or "both".
+
+
+### 3.3.2 Backward Elimination
+
+
+```{r Backward, echo=TRUE}
+
+lm.back <- step(model1, direction = "backward")
+summary(lm.back)
+
+```
+
+
+```{r Backward Accuracy, echo=TRUE}
+
+lm.back.pred <- predict(lm.back, test)
+
+accuracy(lm.back.pred, test$MEDV)
+
+```
+
+### 3.3.3 Forward Selection
+
+
+```{r Forward, echo=TRUE}
+
+lm.forward <- step(model1, direction = "forward")
+summary(lm.forward)
+
+```
+
+```{r Forward Accuracy, echo=TRUE}
+
+lm.forward.pred <- predict(lm.forward, test)
+
+accuracy(lm.forward.pred, test$MEDV)
+
+```
+
+### 3.3.4 Stepwise Regression
+
+
+```{r Stepwise, echo=TRUE}
+
+lm.step <- step(model1, direction = "both")
+summary(lm.step)
+
+```
+
+```{r Step_Accuracy, echo=TRUE}
+
+lm.step.pred <- predict(lm.step, test)
+
+accuracy(lm.step.pred, test$MEDV)
+
+```
+
+### 3.3.5 Comparison
+
+
+```{r Compare, echo=TRUE}
+
+compare_errors <- data.frame( 
+  
+    backwards = c(accuracy(lm.back.pred,test$MEDV)),
+    forward =c(accuracy(lm.forward.pred,test$MEDV)),
+    step = c(accuracy(lm.step.pred,test$MEDV)),
+    original = c(accuracy(model1.pred,test$MEDV))
+)
+rownames(compare_errors) <- c("ME","RMSE","MAE","MPE","MAPE")
+
+compare_errors
+
+```
+
+### 3.3.6 Life chart for backward elimination
+
+
+```{r Backward_Chart, echo=TRUE}
+
+actual = test$MEDV
+
+#lift for backwards
+
+gain1 = gains(actual, lm.back.pred, group = 10)
+
+plot(c(0, gain1$cume.pct.of.total*sum(actual))~c(0, gain1$cume.obs), type = "l", xlab = "#Cases", ylab = "Cumulative MEDV", main = "Lift Chart for Backward Elimination")
+segments(0, 0, nrow(test), sum(actual), lty = "dashed", col = "red", lwd = 2)
+
+```
+
+
+### 3.3.7 Life chart for Forward Selection
+
+
+```{r Forward_Chart, echo=TRUE}
+
+actual = test$MEDV
+
+#Lift Chart for Forward Selection
+
+gain2 = gains(actual,lm.forward.pred,group = 10)
+
+plot(c(0, gain2$cume.pct.of.total*sum(actual))~c(0, gain2$cume.obs), type = "l", xlab = "#Cases", ylab = "Cumulative MEDV", main = "Lift Chart for forward Selection")
+segments(0, 0, nrow(test), sum(actual), lty = "dashed", col = "red", lwd = 2)
+
+```
+
+
+### 3.3.8 Life chart for Stepwise Segregation
+
+
+```{r Step_wise_Chart, echo=TRUE}
+
+actual = test$MEDV
+
+#lift for Stepwise Segregation
+
+gain3 = gains(actual,lm.step.pred, group = 10)
+
+plot(c(0, gain3$cume.pct.of.total*sum(actual))~c(0, gain3$cume.obs), type = "l", xlab = "#Cases", ylab = "Cumulative MEDV", main = "Lift Chart for stepwise Segragation")
+
+segments(0, 0, nrow(test), sum(actual), lty = "dashed", col = "red", lwd = 2)
+
+```
+
+
+### 3.3.8 Life chart for Original Model
+
+
+```{r life_chart_Orig, echo=TRUE}
+
+actual = test$MEDV
+
+#lift for Stepwise Segregation
+
+gain3 = gains(actual,model1.pred, group = 10)
+
+plot(c(0, gain3$cume.pct.of.total*sum(actual))~c(0, gain3$cume.obs), type = "l", xlab = "#Cases", ylab = "Cumulative MEDV", main = "Lift Chart for Original Model")
+
+segments(0, 0, nrow(test), sum(actual), lty = "dashed", col = "red", lwd = 2)
+
+```
+
+
+
+
+All the models ME, MAPE and RMSE within the same numerical neighborhood. The lift charts also look very similar. All three models generated after predictor reduction all look to have similar predictive power.Reducing the predictors has not had a significant impact on the model accuracy.
+
